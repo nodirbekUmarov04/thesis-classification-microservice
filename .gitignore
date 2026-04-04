@@ -182,3 +182,4 @@ cython_debug/
 
 *.WAV
 # Ignore .WAV
+.idea 
