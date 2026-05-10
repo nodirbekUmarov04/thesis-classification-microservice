@@ -183,3 +183,33 @@ cython_debug/
 *.WAV
 # Ignore .WAV
 .idea/
+
+# Local datasets and audio files
+UrbanSound8K/audio/
+UrbanSound8K/Test/
+ESC-50-master/
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+
+# Trained ML artifacts
+artifacts/
+*.keras
+*.h5
+*.pkl
+*.joblib
+*.onnx
+*.pt
+*.pth
+*.npy
+*.npz
+
+# Jupyter runtime artifacts
+*/.ipynb_checkpoints/
+
+# Local runtime files
+uploads/
+tmp/
+temp/
