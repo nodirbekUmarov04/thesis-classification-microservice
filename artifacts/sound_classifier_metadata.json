@@ -1,0 +1,17 @@
+{
+  "class_names": [
+    "transport",
+    "human",
+    "alert",
+    "building_noise",
+    "animals",
+    "others"
+  ],
+  "sample_rate": 16000,
+  "duration": 5,
+  "samples": 80000,
+  "n_mels": 128,
+  "max_len": 157,
+  "train_mean": -48.85756301879883,
+  "train_std": 23.25877571105957
+}

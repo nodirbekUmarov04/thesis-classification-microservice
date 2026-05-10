@@ -1,0 +1,9 @@
+services:
+  noise-classifier:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/app/artifacts:ro
+    environment:
+      - TF_CPP_MIN_LOG_LEVEL=2

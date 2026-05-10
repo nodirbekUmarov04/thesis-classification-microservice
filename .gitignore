@@ -195,16 +195,16 @@ ESC-50-master/
 *.m4a
 
 # Trained ML artifacts
-artifacts/
-*.keras
-*.h5
-*.pkl
-*.joblib
-*.onnx
-*.pt
-*.pth
-*.npy
-*.npz
+#artifacts/
+#*.keras
+#*.h5
+#*.pkl
+#*.joblib
+#*.onnx
+#*.pt
+#*.pth
+#*.npy
+#*.npz
 
 # Jupyter runtime artifacts
 */.ipynb_checkpoints/
