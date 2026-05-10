@@ -5,5 +5,13 @@ services:
       - "8000:8000"
     volumes:
       - ./artifacts:/app/artifacts:ro
+      - ${AUDIO_STORAGE_PATH:-./audio}:/data/audio:ro
     environment:
       - TF_CPP_MIN_LOG_LEVEL=2
+      - DEFAULT_CALIBRATION_OFFSET=${DEFAULT_CALIBRATION_OFFSET:-96.0}
+      - RABBITMQ_ENABLED=${RABBITMQ_ENABLED:-false}
+      - RABBITMQ_HOST=${RABBITMQ_HOST:-rabbitmq}
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USER=${RABBITMQ_USER:-guest}
+      - RABBITMQ_PASS=${RABBITMQ_PASS:-guest}
+      - AUDIO_STORAGE_MOUNT=/data/audio

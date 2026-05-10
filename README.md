@@ -115,6 +115,12 @@ The service will be available at:
 http://127.0.0.1:8000
 ```
 
+By default RabbitMQ integration is disabled in this standalone compose file. Enable it with:
+
+```bash
+RABBITMQ_ENABLED=true docker compose up --build
+```
+
 ## API
 
 ### GET `/health`
@@ -133,7 +139,8 @@ Response:
 {
   "status": "ok",
   "model": "sound_classifier_best.keras",
-  "classes": ["transport", "human", "alert", "building_noise", "animals", "others"]
+  "classes": ["transport", "human", "alert", "building_noise", "animals", "others"],
+  "rabbitmq_enabled": false
 }
 ```
 
@@ -165,24 +172,122 @@ Optional confidence threshold:
 curl -X POST "http://127.0.0.1:8000/predict?confidence_threshold=0.45" -F "file=@audio.wav"
 ```
 
+Optional calibration offset:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/predict?calibration_offset=96" -F "file=@audio.wav"
+```
+
+If `calibration_offset` is not provided, the service uses the default value `96.0`.
+You can override it with the environment variable `DEFAULT_CALIBRATION_OFFSET`.
+
 Response:
 
 ```json
 {
-  "label": "transport",
-  "confidence": 0.977,
-  "chunks_count": 3,
-  "duration_seconds": 14.711
+  "sound_class": "transport",
+  "noise_level_dba": 70.0
 }
 ```
 
 ## Response Fields
 
 ```text
-label              final predicted class
-confidence         average confidence for chunks that voted for the final class
-chunks_count       number of processed 5-second chunks
-duration_seconds   original audio duration
+sound_class   final predicted class
+noise_level_dba   calibrated loudness estimate
+```
+
+Loudness is calculated as:
+
+```text
+noise_level_dba = volume_dbfs + calibration_offset
+```
+
+## RabbitMQ Integration
+
+The service is compatible with the `noisemap` backend event flow.
+
+It consumes:
+
+```text
+exchange: noisemap.events
+routing key: recording.created
+queue: ml.classification.queue
+```
+
+Expected incoming event fields:
+
+```json
+{
+  "recordingId": "...",
+  "userId": "...",
+  "audioFileUrl": "/data/audio/.../recording.wav",
+  "latitude": 43.238,
+  "longitude": 76.945,
+  "calibrationOffset": 96.0,
+  "recordedAt": "2026-05-10T10:00:00Z"
+}
+```
+
+It publishes:
+
+```text
+exchange: noisemap.events
+routing key: classification.completed
+```
+
+Published event:
+
+```json
+{
+  "recordingId": "...",
+  "userId": "...",
+  "latitude": 43.238,
+  "longitude": 76.945,
+  "noiseLevelDba": 70.0,
+  "noiseClass": "transport",
+  "confidenceScore": 0.977,
+  "recordedAt": "2026-05-10T10:00:00Z",
+  "classifiedAt": "2026-05-10T10:00:05Z"
+}
+```
+
+The service also declares and binds `recording.classification.result.queue` to `classification.completed`, so `recording-service` can update the recording status.
+
+### RabbitMQ Environment Variables
+
+```text
+RABBITMQ_ENABLED=false
+RABBITMQ_HOST=rabbitmq
+RABBITMQ_PORT=5672
+RABBITMQ_USER=guest
+RABBITMQ_PASS=guest
+DEFAULT_CALIBRATION_OFFSET=96.0
+AUDIO_STORAGE_MOUNT=/data/audio
+```
+
+### Add to noisemap docker-compose.yml
+
+When running inside the `noisemap` backend compose network, add a service like this:
+
+```yaml
+  ml-classification-service:
+    build: ../thesis-classification-microservice
+    ports:
+      - "8000:8000"
+    environment:
+      RABBITMQ_ENABLED: "true"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: guest
+      RABBITMQ_PASS: guest
+      DEFAULT_CALIBRATION_OFFSET: 96.0
+      AUDIO_STORAGE_MOUNT: /data/audio
+    volumes:
+      - audio_data:/data/audio:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 ```
 
 ## Error Cases
