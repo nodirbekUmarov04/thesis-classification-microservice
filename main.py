@@ -102,15 +102,46 @@ def start_rabbitmq_worker() -> None:
     logger.info("RabbitMQ worker thread launched.")
 
 
+def _decode_with_ffmpeg(audio_bytes: bytes) -> np.ndarray:
+    """Fallback для не-WAV форматов (mp3, m4a, aac, 3gp, ogg, ...).
+    ffmpeg уже установлен в образе. Конвертируем в WAV PCM и читаем soundfile."""
+    import subprocess
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-i", "pipe:0",
+            "-ac", "1",                 # mono
+            "-ar", str(SAMPLE_RATE),    # target sample rate
+            "-f", "wav", "pipe:1",
+        ],
+        input=audio_bytes,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        raise ValueError(
+            "Could not decode audio (ffmpeg failed). Unsupported or corrupt file."
+        )
+    audio, _ = librosa.load(io.BytesIO(proc.stdout), sr=SAMPLE_RATE, mono=True)
+    return audio
+
+
 def decode_wav_audio(audio_bytes: bytes) -> np.ndarray:
+    # Сначала пробуем напрямую (WAV/FLAC/OGG через soundfile — быстро, без ffmpeg)
     try:
         audio, _ = librosa.load(
             io.BytesIO(audio_bytes),
             sr=SAMPLE_RATE,
             mono=True,
         )
-    except Exception as exc:
-        raise ValueError("Could not read audio. Please upload a valid WAV file.") from exc
+    except Exception:
+        # Не распознан soundfile (mp3/m4a/aac/3gp с телефона) — конвертируем ffmpeg
+        try:
+            audio = _decode_with_ffmpeg(audio_bytes)
+        except Exception as exc:
+            raise ValueError(
+                "Could not read audio. Unsupported or corrupt audio file."
+            ) from exc
 
     if audio.size == 0:
         raise ValueError("Uploaded audio is empty.")
