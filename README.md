@@ -180,6 +180,8 @@ curl -X POST "http://127.0.0.1:8000/predict?calibration_offset=96" -F "file=@aud
 
 If `calibration_offset` is not provided, the service uses the default value `96.0`.
 You can override it with the environment variable `DEFAULT_CALIBRATION_OFFSET`.
+If the provided calibration value is missing or outside the valid range, the service
+falls back to the default value.
 
 Response:
 

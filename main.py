@@ -32,6 +32,10 @@ ARTIFACTS_DIR = BASE_DIR / "artifacts"
 MODEL_PATH = ARTIFACTS_DIR / "sound_classifier_best.keras"
 METADATA_PATH = ARTIFACTS_DIR / "sound_classifier_metadata.json"
 DEFAULT_CALIBRATION_OFFSET = float(os.getenv("DEFAULT_CALIBRATION_OFFSET", "96.0"))
+MIN_VALID_CALIBRATION_OFFSET = float(os.getenv("MIN_VALID_CALIBRATION_OFFSET", "60.0"))
+MAX_VALID_CALIBRATION_OFFSET = float(os.getenv("MAX_VALID_CALIBRATION_OFFSET", "130.0"))
+MIN_NOISE_LEVEL_DBA = float(os.getenv("MIN_NOISE_LEVEL_DBA", "30.0"))
+MAX_NOISE_LEVEL_DBA = float(os.getenv("MAX_NOISE_LEVEL_DBA", "130.0"))
 
 RABBITMQ_ENABLED = os.getenv("RABBITMQ_ENABLED", "false").lower() == "true"
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
@@ -199,6 +203,58 @@ def calculate_volume(audio: np.ndarray) -> dict[str, float | str]:
     }
 
 
+def normalize_calibration_offset(calibration_offset: float | None) -> float:
+    try:
+        value = float(calibration_offset)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid calibration offset received: value=%s default=%.2f",
+            calibration_offset,
+            DEFAULT_CALIBRATION_OFFSET,
+        )
+        return DEFAULT_CALIBRATION_OFFSET
+
+    if (
+        not np.isfinite(value)
+        or value < MIN_VALID_CALIBRATION_OFFSET
+        or value > MAX_VALID_CALIBRATION_OFFSET
+    ):
+        logger.warning(
+            "Calibration offset is outside valid range: value=%.2f range=%.2f..%.2f default=%.2f",
+            value,
+            MIN_VALID_CALIBRATION_OFFSET,
+            MAX_VALID_CALIBRATION_OFFSET,
+            DEFAULT_CALIBRATION_OFFSET,
+        )
+        return DEFAULT_CALIBRATION_OFFSET
+
+    return value
+
+
+def estimate_noise_level_dba(
+    dbfs: float,
+    calibration_offset: float | None,
+) -> dict[str, float]:
+    used_calibration_offset = normalize_calibration_offset(calibration_offset)
+    raw_dba = float(dbfs + used_calibration_offset)
+    clipped_dba = float(np.clip(raw_dba, MIN_NOISE_LEVEL_DBA, MAX_NOISE_LEVEL_DBA))
+
+    if clipped_dba != raw_dba:
+        logger.info(
+            "Noise level clipped: raw_dba=%.2f clipped_dba=%.2f range=%.2f..%.2f",
+            raw_dba,
+            clipped_dba,
+            MIN_NOISE_LEVEL_DBA,
+            MAX_NOISE_LEVEL_DBA,
+        )
+
+    return {
+        "noise_level_dba": round(clipped_dba, 2),
+        "raw_noise_level_dba": round(raw_dba, 2),
+        "calibration_offset": round(used_calibration_offset, 2),
+    }
+
+
 def extract_mel_from_chunk(chunk: np.ndarray) -> np.ndarray:
     mel = librosa.feature.melspectrogram(
         y=chunk,
@@ -308,15 +364,16 @@ def classify_audio(
 
     chunks = split_audio(audio)
     volume = calculate_volume(audio)
-    noise_level_dba = volume["dbfs"] + calibration_offset
+    noise_level = estimate_noise_level_dba(volume["dbfs"], calibration_offset)
     logger.info(
-        "Audio volume: filename=%s rms=%.6f peak=%.6f dbfs=%.2f calibration_offset=%.2f dba=%.2f",
+        "Audio volume: filename=%s rms=%.6f peak=%.6f dbfs=%.2f calibration_offset=%.2f raw_dba=%.2f dba=%.2f",
         filename,
         volume["rms"],
         volume["peak"],
         volume["dbfs"],
-        calibration_offset,
-        noise_level_dba,
+        noise_level["calibration_offset"],
+        noise_level["raw_noise_level_dba"],
+        noise_level["noise_level_dba"],
     )
 
     if not chunks:
@@ -340,7 +397,7 @@ def classify_audio(
 
     return {
         "sound_class": final_prediction["label"],
-        "noise_level_dba": round(noise_level_dba, 2),
+        "noise_level_dba": noise_level["noise_level_dba"],
         "confidence_score": round(final_prediction["confidence"], 4),
         "duration_seconds": round(duration_seconds, 3),
         "chunks_count": len(chunks),
@@ -452,16 +509,15 @@ def process_recording_created_event(
 ) -> None:
     recording_id = recording_event.get("recordingId")
     audio_file_url = recording_event.get("audioFileUrl")
-    calibration_offset = recording_event.get("calibrationOffset")
-
-    if calibration_offset is None:
-        calibration_offset = DEFAULT_CALIBRATION_OFFSET
+    calibration_offset = normalize_calibration_offset(
+        recording_event.get("calibrationOffset")
+    )
 
     logger.info(
         "Processing recording.created: recordingId=%s audioFileUrl=%s calibrationOffset=%.2f",
         recording_id,
         audio_file_url,
-        float(calibration_offset),
+        calibration_offset,
     )
 
     audio_bytes = read_audio_bytes_from_url(audio_file_url)
@@ -469,7 +525,7 @@ def process_recording_created_event(
     classification_result = classify_audio(
         audio=audio,
         filename=str(audio_file_url),
-        calibration_offset=float(calibration_offset),
+        calibration_offset=calibration_offset,
         confidence_threshold=0.45,
     )
     completed_event = build_classification_completed_event(
